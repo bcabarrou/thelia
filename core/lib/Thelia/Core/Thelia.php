@@ -21,7 +21,10 @@ namespace Thelia\Core;
  * @author Manuel Raynaud <manu@raynaud.io>
  */
 
+use Propel\Runtime\ActiveQuery\Criteria;
+use Propel\Runtime\ActiveRecord\ActiveRecordInterface;
 use Propel\Runtime\Connection\ConnectionWrapper;
+use Propel\Runtime\Map\TableMap;
 use Propel\Runtime\Propel;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\Config\Loader\LoaderInterface;
@@ -54,6 +57,45 @@ class Thelia extends Kernel
         if ($debug) {
             Debug::enable();
         }
+
+//        $this->enablePropelCompatibilityErrorHandler();
+    }
+
+    private function enablePropelCompatibilityErrorHandler()
+    {
+        $previousHandler = null;
+
+        $handler = function ($errno, $errstr, $errfile, $errline, array $errcontext) use (&$previousHandler) {
+            if (1 === preg_match("/Declaration of .* should be compatible with .*/", $errstr)) {
+                $class = $errcontext['class'];
+
+                $previousErrorReporting = error_reporting();
+                error_reporting(0);
+//                set_error_handler(function ($errno, $errstr, $errfile, $errline, array $errcontext) {
+//                    return true;
+//                }, E_ALL);
+                require $errfile;
+                $reflectedClass = new \ReflectionClass($class);
+//                restore_error_handler();
+                error_reporting($previousErrorReporting);
+
+                if ($reflectedClass->isSubclassOf(ActiveRecordInterface::class) // implemented by model classes
+                || $reflectedClass->isSubclassOf(Criteria::class) // extended by query classes
+                || $reflectedClass->isSubclassOf(TableMap::class) // extended by table map classes
+                ) {
+                    @trigger_error("$errstr", E_WARNING);
+                    return false;
+                }
+            }
+
+            if ($previousHandler !== null) {
+                return call_user_func($previousHandler, $errno, $errstr, $errfile, $errline, $errcontext);
+            } else {
+                return false;
+            }
+        };
+
+        $previousHandler = set_error_handler($handler, E_ALL & E_STRICT);
     }
 
     public static function isInstalled()
